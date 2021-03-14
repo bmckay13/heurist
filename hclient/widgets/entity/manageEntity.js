@@ -35,6 +35,7 @@
 // closeDialog
 
 //defaultBeforeClose
+
 //_selectAndClose - event handler for select-and-close (select_multi) or for any selection event for select_single
 // selectedRecords get and set selected records 
     
@@ -123,7 +124,7 @@ $.widget( "heurist.manageEntity", {
         onInitEditForm:null,  //event listener when EDIT form is fully inited - used in manageRecords._afterInitEditForm only to open structure field formlet
         onSelect:null,
         beforeClose:null,
-        onClose:null,
+        onClose:null,  //
         
         keep_visible_on_selection: false, //for select_single it closes popup on selection
         
@@ -927,7 +928,9 @@ $.widget( "heurist.manageEntity", {
                  
                  
         //dialog buttons SELECT and CLOSE
-        if(this.options['select_mode']=='select_multi' || this.options['select_mode']=='select_roles'){ 
+        if( this.options.edit_mode!='popup' &&
+            (this.options['select_mode']=='select_multi' || this.options['select_mode']=='select_roles'))
+        { 
                 btn_array.push({text:window.hWin.HR( this.options['selectbutton_label'] ),
                         css:{'float':'right',margin:'.5em .4em .5em 0'},  
                         class: 'ui-button-action',
@@ -1032,7 +1035,7 @@ $.widget( "heurist.manageEntity", {
                     
                     if($.isFunction(that.options.onClose)){
                         //that.options.onClose(that._currentEditRecordset);  
-                        that.options.onClose.call();
+                        that.options.onClose.call(that, that.contextOnClose());
                     } 
                     $dlg.remove();    
                     //???? $dlg.parent().remove();    
@@ -1144,9 +1147,13 @@ $.widget( "heurist.manageEntity", {
         }
         
         if(!this.options.isdialog && $.isFunction(this.options.onClose)){
-            this.options.onClose.call();
+            this.options.onClose.call(this, this.contextOnClose());
         } 
         
+    },
+    
+    contextOnClose: function(){
+        return null;  
     },
     
     //
@@ -1306,7 +1313,6 @@ $.widget( "heurist.manageEntity", {
         if (data){
             if(this.options.use_cache){
                 this._cachedRecordset = data.recordset;
-    
             }
             
             if(this.recordList.resultList('instance')){ //for editonly recordList is not inited

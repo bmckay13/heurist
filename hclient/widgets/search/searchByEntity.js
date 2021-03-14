@@ -20,7 +20,7 @@
 */
 
 
-$.widget( "heurist.search_entity", {
+$.widget( "heurist.searchByEntity", {
 
     // default options
     options: {

@@ -37,6 +37,7 @@ $.widget( "heurist.editing_input", {
         values: null,
         readonly: false,
         title: '',  //label (overwrite Display label from record structure)
+        suppress_repeat: false, //true,false or 'force_repeat'
         showclear_button: true,
         showedit_button: true,
         show_header: true, //show/hide label
@@ -47,14 +48,16 @@ $.widget( "heurist.editing_input", {
         change: null,  //onchange callback
         onrecreate: null, //onrefresh callback
         is_insert_mode:false,
-        is_faceted_search:false //is input used in faceted search
+        
+        is_faceted_search:false, //is input used in faceted search or filter builder
+        is_between_mode:false    //duplicate input for freetext and dates for search mode 
     },
 
     //newvalues:{},  //keep actual value for resource (recid) and file (ulfID)
     detailType:null,
     configMode:null, //configuration settings, mostly for enum and resource types (from field rst_FieldConfig)
     customClasses:null, //custom classes to manipulate visibility and styles in editing
-    
+       
     isFileForRecord:false,
     entity_image_already_uploaded: false,
 
@@ -81,6 +84,12 @@ $.widget( "heurist.editing_input", {
         if(this.options.dtFields==null){ //field description is not defined
             return;
         }
+        
+        if(this.options.suppress_repeat=='force_repeat'){
+            this.options['dtFields']['rst_MaxValues'] = 100;
+            this.options.suppress_repeat = false;
+        }
+        
         this.detailType = this.options.detailtype ?this.options.detailtype :this.f('dty_Type');
         
         if((!(this.options.rectypeID>0)) && this.options.recordset){ //detect rectype for (heurist data) Records/recDetails
@@ -163,18 +172,23 @@ $.widget( "heurist.editing_input", {
                 
             }else{ //multiplier button
             
-                is_sortable = true; 
+                is_sortable = !that.options.is_faceted_search; 
+            
+                var btn_cont = $('<span>')
+                    .css({display:'table-cell', 'vertical-align':'top', //'padding-top':'2px',
+                            'min-width':'22px',  'border-color':'transparent'})
+                    .appendTo( this.element )
             
                 this.btn_add = $( "<span>")
-                .addClass("smallbutton editint-inout-repeat-button ui-icon-circlesmall-plus")
-                .appendTo( this.element )
+                    .addClass("smallbutton editint-inout-repeat-button ui-icon-circlesmall-plus")
+                    .appendTo( btn_cont )
                 //.button({icon:"ui-icon-circlesmall-plus", showLabel:false, label:'Add another ' + lblTitle +' value'})
                 .attr('tabindex', '-1')
                 .attr('title', 'Add another ' + lblTitle +' value' )                    
-                .css({display:'table-cell', 'font-size':'2em', cursor:'pointer','vertical-align':'top', 'padding-top':'2px',
+                .css({display:'block', 'font-size':'1.9em', cursor:'pointer','vertical-align':'top', //'padding-top':'2px',
                     'min-width':'22px',
 //outline_suppress does not work - so list all these props here explicitely                
-                    outline: 'none','outline-style':'none', 'box-shadow':'none',  'border-color':'transparent'
+                    outline: 'none','outline-style':'none', 'box-shadow':'none'
                 });
                 
                 if(this.detailType=="blocktext"){
@@ -191,6 +205,7 @@ $.widget( "heurist.editing_input", {
 
                         if( !(Number(this.f('rst_MaxValues'))>0)  || this.inputs.length < this.f('rst_MaxValues')){
                             this._addInput('');
+                            this._refresh();
                         }
                     }
                 });
@@ -207,7 +222,7 @@ $.widget( "heurist.editing_input", {
                         
                 }else if(this.detailType=="relmarker"){
                     
-                    $('<div style="float:right;padding-top:1px;width: 14px;"><span style="font-size:10px" class="ui-icon ui-icon-triangle-2-e-w"/></div>')                
+                    $('<div style="float:right;padding-top:1px;width: 14px;"><span style="font-size:11px" class="ui-icon ui-icon-triangle-2-e-w"/></div>')                
                         .appendTo( this.header )
                         this.header.css({'padding-right':0, width:154});
                         this.header.find('label').css({display:'inline-block', width: 135});
@@ -411,6 +426,9 @@ $.widget( "heurist.editing_input", {
                     }else{
                         if($(input).hSelect('instance')!==undefined) $(input).hSelect('destroy');
                     }
+                    //check for "between" input
+                    that.element.find('#'+$(input).attr('id')+'-2').remove();
+                    
                     input.remove();
             } );
             this.input_cell.remove();
@@ -523,6 +541,8 @@ $.widget( "heurist.editing_input", {
     
     _setAutoWidth: function(){
 
+        if(this.options.is_faceted_search) return;
+        
         var that = this; 
         //auto width
         if ( this.detailType=='freetext' || this.detailType=='integer' || 
@@ -848,37 +868,7 @@ $.widget( "heurist.editing_input", {
             $input = this._recreateSelector($input, value);
             $input = $($input);
             
-            function __onTermChange( event, data ){
-                
-                if(! $($input).attr('radiogroup')){
-                
-                    if($input.hSelect("instance")!=undefined){
-                        
-                        var opt = $input.find('option[value="'+$input.val()+'"]');
-                        var parentTerms = opt.attr('parents');
-                        if(parentTerms){
-                            $input.hSelect("widget").find('.ui-selectmenu-text').text( parentTerms+'.'+opt.text() );    
-                        }    
-                           
-                    }else{
-                        //restore plain text value               
-                        $input.find('option[term-view]').each(function(idx,opt){
-                            $(opt).text($(opt).attr('term-view'));
-                        });
-                        
-                        //assign for selected term value in format: parent.child 
-                        var opt = $input.find( "option:selected" );
-                        var parentTerms = opt.attr('parents');
-                        if(parentTerms){
-                             opt.text(parentTerms+'.'+opt.attr('term-orig'));
-                        }
-                    }
-                
-                }
-                that.onChange();
-            }
-            
-            $input.change( __onTermChange );
+            this._on( $input, {change:this._onTermChange} );
             
             var allTerms = this.f('rst_FieldConfig');    
             
@@ -905,19 +895,7 @@ $.widget( "heurist.editing_input", {
                 .css({'margin-top': '2px'})
                 .appendTo( $inputdiv );
 
-                function __showHideSelByImage(){
-                    var hasImage = ($input.find('option[term-img=1]').length>0);
-                    if(hasImage) {
-                        $input.css({'margin-right': '-44px', 'padding-right': '30px'});
-                        $btn_termsel.show();   
-                    }else{
-                        $input.css({'margin-right': 0, 'padding-right': 0});
-                        $btn_termsel.hide();   
-                    }
-                }
-                
-                __showHideSelByImage();
-                
+                this._showHideSelByImage($input);
 
                 this._on( $btn_termsel, { click: function(){
 
@@ -965,8 +943,6 @@ $.widget( "heurist.editing_input", {
 
                 }});
 
-                    
-                
                 var vocab_id = Number(allTerms);
 
                 if(window.hWin.HAPI4.is_admin()){            
@@ -976,35 +952,8 @@ $.widget( "heurist.editing_input", {
                     .css({'margin-top':'2px',cursor:'pointer'})
                     .appendTo( $inputdiv );
                     
-                    this._on( $btn_termedit2,{ click:
-                        function(){
-                            var rg_options = {
-                                height:800, width:1300,
-                                selection_on_init: allTerms,
-                                innerTitle: false,
-                                innerCommonHeader: $('<div>'
-                                    +(that.options.dtID>0?('modifying field :<b>'+$Db.dty(that.options.dtID,'dty_Name')+'</b>'):'')
-                                    +' dropdown is populated from <b>'+$Db.trm(allTerms,'trm_Label')+'</b> vocabulary</div>'),
-                                onInitFinished: function(){
-                                    var that2 = this;
-                                    setTimeout(function(){
-                                        that2.vocabularies_div.manageDefTerms('selectVocabulary', vocab_id);
-                                    },500);
-                                },
-                                onClose: function(){
-                                    $.each(that.inputs, function(index, input){ 
-                                        input = $(input);
-                                        input.css('width','auto');
-                                        input = that._recreateSelector(input, true);
-                                        input.change( __onTermChange );
-                                    });
-                                    __showHideSelByImage();                                    
-                                }
-                            };
-                            window.hWin.HEURIST4.ui.showEntityDialog('defTerms', rg_options);
-                        }
-                    });
-                
+                    this._on( $btn_termedit2,{ click: function(){ this._openManageTerms(vocab_id); }});
+                        
                 }
             
                 
@@ -1035,77 +984,16 @@ $.widget( "heurist.editing_input", {
                                 input = $(input);
                                 input.css('width','auto');
                                 input = that._recreateSelector(input, true);
-                                input.change( __onTermChange );
+                                that._on( input, {change:this._onTermChange} );
+                                that._showHideSelByImage(input);
+
                             });
-                            
-                            __showHideSelByImage();
                                 
                          }
                     };
                 window.hWin.HEURIST4.ui.showEntityDialog('defTerms', rg_options); // it recreates  
                 
                 return;
-//OLD version with admin/structure/terms                
-/*
-                if(isVocabulary){ 
-
-                    var type = (this.detailType!='enum')?'relation':'enum';
-                    
-                    var url = window.hWin.HAPI4.baseURL 
-                        + 'admin/structure/terms/editTermForm.php?db='+window.hWin.HAPI4.database
-                        + '&treetype='+type+'&parent='+Number(allTerms);
-                    
-                    window.hWin.HEURIST4.msg.showDialog(url, {height:340, width:700,
-                        title: 'Add Term',
-                        noClose: true, //hide close button
-                        //class:'ui-heurist-bg-light',
-                        onpopupload:function(dosframe){
-                            $(dosframe.contentDocument).find('#trmName').focus();
-                        },
-                        callback: function(context){
-                                $.each(that.inputs, function(index, input){ 
-                                    input = $(input);
-                                    input.css('width','auto');
-                                    input = that._recreateSelector(input, true);
-                                    input.change( __onTermChange );
-                                });
-                                
-                                __showHideSelByImage();
-                        }
-                    } );
-                    
-
-                }else{
-                    //NOT USED ANYMORE
-                    var url = window.hWin.HAPI4.baseURL 
-                        + 'admin/structure/terms/selectTerms.html?mode=editrecord&db='
-                        + window.hWin.HAPI4.database
-                        + '&detailTypeID='+this.options.dtID;
-
-                    window.hWin.HEURIST4.msg.showDialog(url, {height:540, width:750,
-                        title: 'Select Term',
-                        noClose: true, //hide close button
-                        //class:'ui-heurist-bg-light',
-                        callback: function(editedTermTree, editedDisabledTerms){
-                            if(editedTermTree || editedDisabledTerms) {
-                                
-                                that.options['dtFields']['rst_FilteredJsonTermIDTree'] = editedTermTree;
-                                that.options['dtFields']['rst_TermIDTreeNonSelectableIDs'] = editedDisabledTerms
-                                                                
-                                $.each(that.inputs, function(index, input){ 
-                                    input = $(input);
-                                    input.css('width','auto');
-                                    input = that._recreateSelector(input, true);
-                                    input.change( __onTermChange );
-                                });
-                                
-                                __showHideSelByImage();
-                            }
-                        }
-                    });
-                }                
-*/                
-                
                 
                 }} ); //end btn onclick
 
@@ -1166,8 +1054,26 @@ $.widget( "heurist.editing_input", {
             if(value){
                 $input.val(value);
             }
-
         }
+        /* todo
+        else if(this.detailType=="keyword"){ 
+
+            $input = $( "<select>")
+            .uniqueId()
+            .addClass('text ui-widget-content ui-corner-all')
+            .css('width','auto')
+            .val(value)
+            .change(function(){that.onChange();})
+            .appendTo( $inputdiv );
+
+            window.hWin.HEURIST4.ui.createUserGroupsSelect($input.get(0),null,
+                [{key:'',title:window.hWin.HR('select user/group...')},
+                    {key:window.hWin.HAPI4.currentUser['ugr_ID'], title:window.hWin.HAPI4.currentUser['ugr_FullName'] }] );
+            if(value){
+                $input.val(value);
+            }
+            
+        }*/
         else if(this.detailType=='relmarker'){ //---------------------------------------------------- 
             
                 this.options.showclear_button = false;
@@ -1945,6 +1851,13 @@ $.widget( "heurist.editing_input", {
                     }
                 });
                 
+                /*
+                if(this.options.is_faceted_search){
+                    $input.css({'max-width':'13ex','min-width':'13ex'});
+                }
+                */
+                
+                
                 /*$input.keyup(function () {
                 if (this.value != this.value.replace(/[^0-9-]/g, '')) {
                 this.value = this.value.replace(/[^0-9-]/g, '');  //[-+]?\d
@@ -1981,185 +1894,11 @@ $.widget( "heurist.editing_input", {
                             window.hWin.HEURIST4.msg.showTooltipFlash(window.hWin.HR('Numeric field'),1000,$input);
                         }
                     });
-                    
+
             }else
             if(this.detailType=='date'){//----------------------------------------------------
                 
-                $input.css('width', this.options.is_faceted_search?'13ex':'20ex');
-
-                function __onDateChange(){
-                            var value = $input.val();
-                            
-                            that.newvalues[$input.attr('id')] = value; 
-                            
-                            if(that.options.dtID>0){
-                                var isTemporalValue = value && value.search(/\|VER/) != -1; 
-                                if(isTemporalValue) {
-                                    window.hWin.HEURIST4.ui.setValueAndWidth($input, temporalToHumanReadableString(value));    
-                                    
-                                    $input.addClass('Temporal').removeClass('text').attr('readonly','readonly');
-                                }else{
-                                    $input.removeClass('Temporal').addClass('text').removeAttr("readonly").css('width','20ex');
-                                }
-                            }
-                            
-                            that.onChange();
-                }
-                
-                
-                if($.isFunction($('body').calendarsPicker)){ //third party picker - NOT IN USE
-                        
-                    var defDate = window.hWin.HAPI4.get_prefs("record-edit-date");
-                    $input.calendarsPicker({
-                        calendar: $.calendars.instance('gregorian'),
-                        showOnFocus: false,
-                        defaultDate: defDate?defDate:'',
-                        selectDefaultDate: true,
-                        dateFormat: 'yyyy-mm-dd',
-                        pickerClass: 'calendars-jumps',
-                        //popupContainer: $input.parents('body'),
-                        onSelect: function(dates){
-                        },
-                        renderer: $.extend({}, $.calendars.picker.defaultRenderer,
-                                {picker: $.calendars.picker.defaultRenderer.picker.
-                                    replace(/\{link:prev\}/, '{link:prevJump}{link:prev}').
-                                    replace(/\{link:next\}/, '{link:nextJump}{link:next}')}),
-                        showTrigger: '<span class="ui-icon ui-icon-calendar trigger" style="display:inline-block" alt="Popup"></span>'}
-                    );     
-                           
-                }else{ // we use jquery datepicker
-                
-                        
-                        var $tinpt = $('<input type="hidden">').val($input.val()).appendTo( $inputdiv );
-
-                        var $btn_datepicker = $( '<span>', {title: 'Show calendar'})
-                            .addClass('smallicon ui-icon ui-icon-calendar')
-                            .appendTo( $inputdiv );
-                            
-                        
-                        var $datepicker = $tinpt.datepicker({
-                            /*showOn: "button",
-                            buttonImage: "ui-icon-calendar",
-                            buttonImageOnly: true,*/
-                            showButtonPanel: true,
-                            changeMonth: true,
-                            changeYear: true,
-                            dateFormat: 'yy-mm-dd',
-                            beforeShow: function(){
-                                
-                                if(that.is_disabled) return false;
-                                var cv = $input.val();
-                                
-                                var prev_dp_value = window.hWin.HAPI4.get_prefs('edit_record_last_entered_date'); 
-                                if(cv=='' && !window.hWin.HEURIST4.util.isempty(prev_dp_value)){
-                                    //$datepicker.datepicker( "setDate", prev_dp_value );    
-                                    $datepicker.datepicker( "option", "defaultDate", prev_dp_value); 
-                                }else if(cv!='' && cv.indexOf('-')<0){
-                                    $datepicker.datepicker( "option", "defaultDate", cv+'-01-01'); 
-                                }else if(cv!='') {
-                                    $tinpt.val($input.val());
-                                    //$datepicker.datepicker( "option", "setDate", cv); 
-                                }
-                            
-                            },
-                            onClose: function(dateText, inst){
-                                
-                                if($tinpt.val()!=''){
-                                    $input.val($tinpt.val());
-                                    window.hWin.HAPI4.save_pref('edit_record_last_entered_date', $input.val());
-                                    __onDateChange();
-                                }else{
-                                    $tinpt.val($input.val());
-                                }
-                            }
-                        });
-                        
-                        this._on( $input, {
-                            keyup: function(event){
-                                if(!isNaN(String.fromCharCode(event.which))){
-                                    var cv = $input.val();
-                                    if(cv!='' && cv.indexOf('-')<0){
-                                        $datepicker.datepicker( "setDate", cv+'-01-01');   
-                                        $input.val(cv);
-                                    }
-                                }
-                            },
-                            keypress: function (e) {
-                                var code = e.charCode || e.keyCode;
-                                var charValue = String.fromCharCode(code);
-                                var valid = false;
-
-                                if(charValue=='-'){
-                                    valid = true;
-                                }else{
-                                    valid = /^[0-9]+$/.test(charValue);
-                                }
-
-                                if(!valid){
-                                    window.hWin.HEURIST4.util.stopEvent(e);
-                                    e.preventDefault();
-                                }
-
-                            },
-                            dblclick: function(){
-                                $btn_datepicker.click();
-                            }
-                        });
-
-                        //.button({icons:{primary: 'ui-icon-calendar'},text:false});
-                       
-                        
-                        this._on( $btn_datepicker, { click: function(){
-                            
-                                if(that.is_disabled) return;
-                                
-                                $datepicker.datepicker( 'show' ); 
-                                $("#ui-datepicker-div").css("z-index", "999999 !important"); 
-                                //$(".ui-datepicker").css("z-index", "999999 !important");   
-                        }} );
-                } 
-
-                if(this.options.dtID>0){ //this is details of records
-                
-                    if(this.options.is_faceted_search){
-                        $input.css({'max-width':'13ex','min-width':'13ex'});
-                    }else{
-                        var $btn_temporal = $( '<span>', 
-                            {title: 'Pop up widget to enter compound date information (uncertain, fuzzy, radiometric etc.)'})
-                        .addClass('smallicon ui-icon ui-icon-clock')
-                        .appendTo( $inputdiv );
-                        //.button({icons:{primary: 'ui-icon-clock'}, text:false});
-                    }
-                    
-                    this._on( $btn_temporal, { click: function(){
-                        
-                                if(that.is_disabled) return;
-
-                                var url = window.hWin.HAPI4.baseURL 
-                                    + 'hclient/widgets/editing/editTemporalObject.html?'
-                                    + encodeURIComponent(that.newvalues[$input.attr('id')]
-                                                ?that.newvalues[$input.attr('id')]:$input.val());
-                                
-                                window.hWin.HEURIST4.msg.showDialog(url, {height:550, width:750,
-                                    title: 'Temporal Object',
-                                    //class:'ui-heurist-bg-light',
-                                    callback: function(str){
-                                        if(!window.hWin.HEURIST4.util.isempty(str) && that.newvalues[$input.attr('id')] != str){
-                                            $input.val(str);    
-                                            $input.change();
-                                        }
-                                    }
-                                } );
-                    
-                    }} );
-                    
-                    $input.change(__onDateChange);
-                   
-                }//temporal allowed
-                else{
-                    $input.change(__onDateChange);
-                    //this.newvalues[$input.attr('id')] = value;  //for this type assign value at init          
-                }
+                this._createDateInput($input, $inputdiv);
                 
                 $input.val(value);    
                 $input.change();   
@@ -2602,9 +2341,9 @@ console.log('onpaste');
             if(this.detailType=='geo'){   //----------------------------------------------------
                 
                 $input.css({'width':'62ex','padding-left':'30px',cursor:'hand'});
-                   
+                
                 var $gicon = $('<span>').addClass('ui-icon ui-icon-globe')
-                    .css({position:'absolute',margin:'5px 0 0 8px',cursor:'hand'})
+                    .css({position:'absolute',margin:'4px 0 0 8px',cursor:'hand'})
                     .insertBefore($input);
                 
                 /* 2017-11-08 no more buttons
@@ -2631,6 +2370,9 @@ console.log('onpaste');
                             +'viewers/map/mapDraw.php?db='+window.hWin.HAPI4.database;
                        
                         var wkt_params = {'wkt': that.newvalues[$input.attr('id')] };
+                        if(that.options.is_faceted_search){
+                            wkt_params['geofilter'] = true;
+                        }
 
                         if(this.options.rectypeID == window.hWin.HAPI4.sysinfo['dbconst']['RT_GEOTIFF_SOURCE']){
 
@@ -2648,7 +2390,9 @@ console.log('onpaste');
                             }
                         }
 
-                        window.hWin.HEURIST4.msg.showDialog(url, {height:'900', width:'1000',
+                        window.hWin.HEURIST4.msg.showDialog(url, {
+                            height:that.options.is_faceted_search?540:'900',
+                            width:that.options.is_faceted_search?600:'1000',
                             window: window.hWin,  //opener is top most heurist window
                             dialogid: 'map_digitizer_dialog',
                             default_palette_class: 'ui-heurist-populate',
@@ -2658,9 +2402,17 @@ console.log('onpaste');
                             callback: function(location){
                                 if( !window.hWin.HEURIST4.util.isempty(location) ){
                                     //that.newvalues[$input.attr('id')] = location
-                                    that.newvalues[$input.attr('id')] = location.type+' '+location.wkt;
+                                    that.newvalues[$input.attr('id')] = (that.options.is_faceted_search
+                                                ?'':(location.type+' '))
+                                                +location.wkt;
                                     var geovalue = window.hWin.HEURIST4.geo.wktValueToDescription(location.type+' '+location.wkt);
-                                    $input.val(geovalue.type+'  '+geovalue.summary).change();
+                                    if(that.options.is_faceted_search){
+                                        $input.val(geovalue.summary).change();
+                                    }else{
+                                        $input.val(geovalue.type+'  '+geovalue.summary);
+                                        $input.change();    
+                                    }
+                                    
                                     //$input.val(location.type+' '+location.wkt)
                                 }
                             }
@@ -2751,6 +2503,8 @@ console.log('onpaste');
         }
 
 
+
+        this.inputs.push($input);
         
         var dwidth = this.f('rst_DisplayWidth');
         
@@ -2771,10 +2525,25 @@ console.log('onpaste');
 
         }
         
+        if(this.options.is_faceted_search){
+            
+            if(this.options.is_between_mode && 
+                (this.detailType=='freetext' || this.detailType=='date'
+                || this.detailType=='integer' || this.detailType=='float')){
+
+                    
+                this.addSecondInut( $input.attr('id') );
+                    
+            }else {
+                this.options.is_between_mode = false;
+                if(this.detailType!='date') 
+                        $input.css({'max-width':'33ex','min-width':'33ex'});
+            }
+        }
+        
         //if(this.detailType!='blocktext')
         //    $input.css('max-width', '600px');
 
-        this.inputs.push($input);
 
         //name="type:1[bd:138]"
 
@@ -2818,6 +2587,12 @@ console.log('onpaste');
                 }
             });
 
+        }
+        
+        //move term error message to last 
+        var trm_err = $inputdiv.find('.term-error-message');
+        if(trm_err.length>0){
+           trm_err.appendTo($inputdiv);
         }
 
         return $input.attr('id');
@@ -3130,7 +2905,99 @@ console.log('onpaste');
         }
         
     },
+    
+    //
+    //
+    //
+    _onTermChange: function( orig, data ){
+        
+        var $input = (orig.target)? $(orig.target): orig;
+         
+//console.log('_onTermChange');
+                
+                if(! $input.attr('radiogroup')){
+                
+                    if($input.hSelect("instance")!=undefined){
+                        
+                        var opt = $input.find('option[value="'+$input.val()+'"]');
+                        var parentTerms = opt.attr('parents');
+                        if(parentTerms){
+                            $input.hSelect("widget").find('.ui-selectmenu-text').text( parentTerms+'.'+opt.text() );    
+                        }    
+                           
+                    }else{
+                        //restore plain text value               
+                        $input.find('option[term-view]').each(function(idx,opt){
+                            $(opt).text($(opt).attr('term-view'));
+                        });
+                        
+                        //assign for selected term value in format: parent.child 
+                        var opt = $input.find( "option:selected" );
+                        var parentTerms = opt.attr('parents');
+                        if(parentTerms){
+                             opt.text(parentTerms+'.'+opt.attr('term-orig'));
+                        }
+                    }
+                
+                }
 
+                //hide individual error                
+                $input.parent().find('.term-error-message').hide();
+                
+                this.onChange();
+    },
+    
+    //
+    //
+    //
+    _openManageTerms: function( vocab_id ){
+        
+        var that = this;
+        
+        var rg_options = {
+            height:800, width:1300,
+            selection_on_init: vocab_id,
+            innerTitle: false,
+            innerCommonHeader: $('<div>'
+                +(that.options.dtID>0?('modifying field :<b>'+$Db.dty(that.options.dtID,'dty_Name')+'</b>'):'')
+                +' dropdown is populated from <b>'+vocab_id+' '+$Db.trm(vocab_id, 'trm_Label')+'</b> vocabulary</div>'),
+            onInitFinished: function(){
+                var that2 = this;
+                setTimeout(function(){
+                    that2.vocabularies_div.manageDefTerms('selectVocabulary', vocab_id);
+                },500);
+            },
+            onClose: function(){
+                $.each(that.inputs, function(index, input){ 
+                    input = $(input);
+                    input.css('width','auto');
+                    input = that._recreateSelector(input, true);
+                    that._on( input, {change:that._onTermChange} );
+                    that._showHideSelByImage( input ); 
+                });
+                
+            }
+        };
+        
+        window.hWin.HEURIST4.ui.showEntityDialog('defTerms', rg_options);
+    },
+    
+    //
+    //
+    //
+    _showHideSelByImage: function($input){
+            var hasImage = ($input.find('option[term-img=1]').length>0);
+            
+            var $btn_termsel = $input.parent().find('.ui-icon-image');
+            
+            if(hasImage) {
+                $input.css({'margin-right': '-44px', 'padding-right': '30px'});
+                $btn_termsel.show();   
+            }else{
+                $input.css({'margin-right': 0, 'padding-right': 0});
+                $btn_termsel.hide();   
+            }
+    },
     //
     // recreate SELECT for enum/relation type
     //
@@ -3173,7 +3040,8 @@ console.log('onpaste');
                 }
                 
 
-            }else{
+            }
+            else{
 
                 if (!$.isArray(allTerms) && !window.hWin.HEURIST4.util.isempty(allTerms)) {
                     //is it CS string - convert to array
@@ -3211,7 +3079,8 @@ console.log('onpaste');
                            $($input).hSelect("refresh"); 
             }
 
-        }else{ //this is usual enumeration from defTerms
+        }
+        else{ //this is usual enumeration from defTerms
 
             var headerTerms = '';
             allTerms = this.f('rst_FilteredJsonTermIDTree');        
@@ -3247,37 +3116,125 @@ console.log('onpaste');
                $input.hSelect('widget').html('<span style="padding: 0.1em 2.1em 0.2em 0.2em">no terms defined, please add terms</span><span class="ui-selectmenu-icon ui-icon ui-icon-triangle-1-e"></span>'); 
             }
             
+            var err_ele = $input.parent().find('.term-error-message');
+            if(err_ele.length>0){
+                err_ele.remove();
+            }
+            
             //show error message on init                    
             //value is not allowed
             if( !window.hWin.HEURIST4.util.isempty(allTerms) &&
                 window.hWin.HEURIST4.util.isNumber(value) && $input.val()!=value){
-                    
+                
+                this.error_message.css({'font-weight': 'bold', color: 'red'});    
+                var sMsg = null;
                 var name = $Db.trm(value,'trm_Label');
                 if(window.hWin.HEURIST4.util.isempty(name)){
+                    //missed
                     sMsg = 'The term code '+value+' recorded for this field is not recognised. Please select a term from the dropdown.';
                 }else{
+                    //exists however in different vocabulary
+                    //get name for this vocabulary
+                    var vocName = $Db.trm(allTerms,'trm_Label');
+                    //get name for term vocabulary
+                    var vocId2 = $Db.getTermVocab(value);
+                    var vocName2 = $Db.trm(vocId2, 'trm_Label');
+                    //check that the same name vocabulary exists in this vocabualry
+                    var code2 = $Db.getTermByLabel(allTerms, name);
+                    
+                    sMsg = '';
+                    if(code2>0){
+                        
+                        sMsg = '.<br><span>Term (code '+code2+') with the same name already exists in "'
+                        +vocName+'". <a href="#" class="term-sel" data-term="'+code2+'">Use this term</a></span>';
+                    }else{
+                        if(window.hWin.HAPI4.is_admin()){
+                            sMsg = '.<br><span>If you are sure the term is not used by another field, you can '
+                            +'<a href="#" class="term-move">move term</a> to the "'
+                            +vocName+'" vocabulary '
+                            +' Alternatively you may <a href="#" class="term-ref" data-term="'
+                                +value+'"  data-vocab="'
+                                +allTerms+'">create a reference</a> from vocabulary "'
+                            +vocName+'" to the term in its current location.</span>';
+                        }else {
+                            sMsg = sMsg + 
+                            '.<br><span>Ask database manager to correct this vocabulary</span>';    
+                        }
+                    }
+                    
                     var opt = window.hWin.HEURIST4.ui.addoption($input[0], value, '!!! '+name); 
                     $(opt).attr('ui-state-error',1);
                     $input.val(value);
                     $input.hSelect('refresh');
-                    sMsg = 'The term "'+name+'" (code '+value+') is not valid for this field. '
-                    +'Please select from dropdown or modify field definition to include this term';
+                    sMsg = '<span class="heurist-prompt ui-state-error">'
+                            +'The term "'+name+'" (code '+value+') in vocabulary "'+vocName2
+                            +'" is not valid for this field which uses vocabulary "'+vocName+'" </span>'
+                            +sMsg;
+                            
+                    this.error_message.css({'font-weight': 'normal', color: '#b15f4e'}); 
                 }
-                this.showErrorMsg(sMsg);
+
+                if(!window.hWin.HEURIST4.util.isempty(sMsg)){
+                    //add error message per every term
+                    
+                    err_ele = $( "<div>")
+                        .addClass('term-error-message')
+                        .html(sMsg)
+                        .css({'height': 'auto',
+                            'width': 'fit-content',
+                            'padding': '0.2em',
+                            'border': 0,
+                            'margin-bottom': '0.2em'})
+                        .appendTo( $input.parent() );
+                    
+                    err_ele.find('.ui-state-error')
+                        .css({color:'#b36b6b',
+                              border: 'none',
+                             'font-weight': 'normal'        
+                        });
+                    
+                
+                    //this.showErrorMsg(sMsg);
+                    
+                    this._on(err_ele.find('.term-sel'),{click:function(e){
+                        var trm_id = $(e.target).attr('data-term');
+                        $input.val(trm_id);
+                        $input.hSelect('refresh');
+                        $input.change();
+                    }});
+                    
+
+                    //this._on(this.error_message.find('.term-move'),{click:function(){}});
+                    if(window.hWin.HAPI4.is_admin()){  
+                        var that = this;
+                        this._on(err_ele.find('.term-ref'),{click:function(e){
+                            var trm_id = $(e.target).attr('data-term');
+                            var voc_id = $(e.target).attr('data-vocab');
+                            $Db.setTermReferences(voc_id, trm_id, null, 
+                            function(){
+                                window.hWin.HAPI4.triggerEvent(window.hWin.HAPI4.Event.ON_STRUCTURE_CHANGE, 
+                                    { source:this.uuid, type:'trm' });    
+                                that._recreateSelector($input, value);
+                            });
+                               //this._openManageTerms(allTerms);
+                        }});
+                    };
+                }
+                
                 
             }    
             
-        }
+        }                                                                   
         
         return $input;
-    },
+    },//_recreateSelector
     
     //
     //
     //
     showErrorMsg: function(sMsg){
         if(!window.hWin.HEURIST4.util.isempty(sMsg)){
-            this.error_message.text(sMsg).show();    
+            this.error_message.html(sMsg).show();    
         }else{
             this.error_message.hide();
             $(this.inputs).removeClass('ui-state-error');
@@ -3463,11 +3420,28 @@ console.log('onpaste');
             var ress2 = [];
             
             for (idx in this.inputs) {
-                var res = this._getValue(this.inputs[idx]);
-             
+                var $input = this.inputs[idx];
+                
+                var res = this._getValue($input);
+
+
                 if(!window.hWin.HEURIST4.util.isempty( res )){ 
-                    
-                    var ele = this.inputs[idx].parents('.input-div');
+
+                    if(this.options.is_between_mode){
+                        var res2;
+                        if(this.detailType=='date'){
+                            res2 = this.newvalues[$input.attr('id')+'-2'];    
+                        }else{
+                            res2 = this.element.find('#'+$input.attr('id')+'-2').val();
+                        }
+                        if(window.hWin.HEURIST4.util.isempty( res2 )){ 
+                            res = '';
+                        }else{
+                            res  = res+'<>'+res2;
+                        }
+                    }
+                                    
+                    var ele = $input.parents('.input-div');
                     var k = ele.index();
                     
                     ress[k] = res;
@@ -3825,6 +3799,275 @@ console.log('onpaste');
                 ptrset = ptrset.split(',')
         }
         return ptrset;
+    },
+    
+    //
+    //
+    //
+    _createDateInput: function($input, $inputdiv){
+      
+                $input.css('width', this.options.is_faceted_search?'13ex':'20ex');
+                
+                var that = this;
+
+                function __onDateChange(){
+                            var value = $input.val();
+                            
+                            that.newvalues[$input.attr('id')] = value; 
+                            
+                            if(that.options.dtID>0){
+                                var isTemporalValue = value && value.search(/\|VER/) != -1; 
+                                if(isTemporalValue) {
+                                    window.hWin.HEURIST4.ui.setValueAndWidth($input, temporalToHumanReadableString(value));    
+                                    
+                                    $input.addClass('Temporal').removeClass('text').attr('readonly','readonly');
+                                }else{
+                                    $input.removeClass('Temporal').addClass('text').removeAttr("readonly").css('width','20ex');
+                                }
+                            }
+                            
+                            that.onChange();
+                }
+                
+                
+                if($.isFunction($('body').calendarsPicker)){ //third party picker - NOT IN USE
+                        
+                    var defDate = window.hWin.HAPI4.get_prefs("record-edit-date");
+                    $input.calendarsPicker({
+                        calendar: $.calendars.instance('gregorian'),
+                        showOnFocus: false,
+                        defaultDate: defDate?defDate:'',
+                        selectDefaultDate: true,
+                        dateFormat: 'yyyy-mm-dd',
+                        pickerClass: 'calendars-jumps',
+                        //popupContainer: $input.parents('body'),
+                        onSelect: function(dates){
+                        },
+                        renderer: $.extend({}, $.calendars.picker.defaultRenderer,
+                                {picker: $.calendars.picker.defaultRenderer.picker.
+                                    replace(/\{link:prev\}/, '{link:prevJump}{link:prev}').
+                                    replace(/\{link:next\}/, '{link:nextJump}{link:next}')}),
+                        showTrigger: '<span class="ui-icon ui-icon-calendar trigger" style="display:inline-block" alt="Popup"></span>'}
+                    );     
+                           
+                }else{ // we use jquery datepicker
+                
+                        
+                        var $tinpt = $('<input type="hidden" data-picker="'+$input.attr('id')+'">')
+                                .val($input.val()).insertAfter( $input );
+
+                        var $btn_datepicker = $( '<span>', {title: 'Show calendar'})
+                            .attr('data-picker',$input.attr('id'))
+                            .addClass('smallicon ui-icon ui-icon-calendar')
+                            .insertAfter( $tinpt );
+                            
+                        
+                        var $datepicker = $tinpt.datepicker({
+                            /*showOn: "button",
+                            buttonImage: "ui-icon-calendar",
+                            buttonImageOnly: true,*/
+                            showButtonPanel: true,
+                            changeMonth: true,
+                            changeYear: true,
+                            dateFormat: 'yy-mm-dd',
+                            beforeShow: function(){
+                                
+                                if(that.is_disabled) return false;
+                                var cv = $input.val();
+                                
+                                var prev_dp_value = window.hWin.HAPI4.get_prefs('edit_record_last_entered_date'); 
+                                if(cv=='' && !window.hWin.HEURIST4.util.isempty(prev_dp_value)){
+                                    //$datepicker.datepicker( "setDate", prev_dp_value );    
+                                    $datepicker.datepicker( "option", "defaultDate", prev_dp_value); 
+                                }else if(cv!='' && cv.indexOf('-')<0){
+                                    $datepicker.datepicker( "option", "defaultDate", cv+'-01-01'); 
+                                }else if(cv!='') {
+                                    $tinpt.val($input.val());
+                                    //$datepicker.datepicker( "option", "setDate", cv); 
+                                }
+                            
+                            },
+                            onClose: function(dateText, inst){
+                                
+                                if($tinpt.val()!=''){
+                                    $input.val($tinpt.val());
+                                    window.hWin.HAPI4.save_pref('edit_record_last_entered_date', $input.val());
+                                    __onDateChange();
+                                }else{
+                                    $tinpt.val($input.val());
+                                }
+                            }
+                        });
+                        
+                        this._on( $input, {
+                            keyup: function(event){
+                                if(!isNaN(String.fromCharCode(event.which))){
+                                    var cv = $input.val();
+                                    if(cv!='' && cv.indexOf('-')<0){
+                                        $datepicker.datepicker( "setDate", cv+'-01-01');   
+                                        $input.val(cv);
+                                    }
+                                }
+                            },
+                            keypress: function (e) {
+                                var code = e.charCode || e.keyCode;
+                                var charValue = String.fromCharCode(code);
+                                var valid = false;
+
+                                if(charValue=='-'){
+                                    valid = true;
+                                }else{
+                                    valid = /^[0-9]+$/.test(charValue);
+                                }
+
+                                if(!valid){
+                                    window.hWin.HEURIST4.util.stopEvent(e);
+                                    e.preventDefault();
+                                }
+
+                            },
+                            dblclick: function(){
+                                $btn_datepicker.click();
+                            }
+                        });
+
+                        //.button({icons:{primary: 'ui-icon-calendar'},text:false});
+                       
+                        
+                        this._on( $btn_datepicker, { click: function(){
+                            
+                                if(that.is_disabled) return;
+                                
+                                $datepicker.datepicker( 'show' ); 
+                                $("#ui-datepicker-div").css("z-index", "999999 !important"); 
+                                //$(".ui-datepicker").css("z-index", "999999 !important");   
+                        }} );
+                } 
+
+                if(this.options.is_faceted_search){
+                    
+                        $input.css({'max-width':'13ex','min-width':'13ex'});
+                    
+                }else if(this.options.dtID>0){ //this is details of records
+                
+                    
+                        var $btn_temporal = $( '<span>', 
+                            {title: 'Pop up widget to enter compound date information (uncertain, fuzzy, radiometric etc.)'})
+                        .addClass('smallicon ui-icon ui-icon-clock')
+                        .appendTo( $inputdiv );
+                        //.button({icons:{primary: 'ui-icon-clock'}, text:false});
+                        this._on( $btn_temporal, { click: function(){
+                            
+                                    if(that.is_disabled) return;
+
+                                    var url = window.hWin.HAPI4.baseURL 
+                                        + 'hclient/widgets/editing/editTemporalObject.html?'
+                                        + encodeURIComponent(that.newvalues[$input.attr('id')]
+                                                    ?that.newvalues[$input.attr('id')]:$input.val());
+                                    
+                                    window.hWin.HEURIST4.msg.showDialog(url, {height:550, width:750,
+                                        title: 'Temporal Object',
+                                        //class:'ui-heurist-bg-light',
+                                        callback: function(str){
+                                            if(!window.hWin.HEURIST4.util.isempty(str) && that.newvalues[$input.attr('id')] != str){
+                                                $input.val(str);    
+                                                $input.change();
+                                            }
+                                        }
+                                    } );
+                        
+                        }} );
+                    
+                }//temporal allowed
+                
+                $input.change(__onDateChange);
+    },
+    
+    
+    //
+    //
+    //
+    setBetweenMode: function(mode_val){
+        
+        if(this.options.is_faceted_search && 
+           this.options.is_between_mode!=mode_val && 
+                (this.detailType=='freetext' || this.detailType=='date'
+                || this.detailType=='integer' || this.detailType=='float')){
+            
+           this.options.is_between_mode = mode_val;
+           
+           if(this.options.is_between_mode){
+                this.addSecondInut();           
+           }else{
+               var that = this;
+               this.element.find('.span-dash').remove();
+               $.each(this.inputs, function(idx, item){
+                    var id = $(item).attr('id')+'-2';
+                    that.element.find('#'+id).remove();
+                    if(that.detailType=='date') {
+                        that.element.find('input[data-picker="'+id+'"]').remove();
+                        that.element.find('span[data-picker="'+id+'"]').remove();
+                    }
+               });
+           }
+        }
+    },
+    
+    //
+    //
+    //
+    addSecondInut: function(input_id){
+
+        var that = this;
+        $.each(this.inputs, function(idx, item){
+
+            var $input = $(item);
+            if(input_id==null || $input.attr('id')==input_id){
+                
+                var $inputdiv = $input.parents('.input-div');
+                
+                var edash = $('<span class="span-dash">&nbsp;-&nbsp;</span>')
+                //duplicate input for between mode
+                if(that.detailType=='date') {
+                    
+                    
+                    //var dpicker = that.element.find('input[data-picker="'+$input.attr('id')+'"]');
+                    var dpicker_btn = that.element.find('span[data-picker="'+$input.attr('id')+'"]');
+                    
+                    edash.insertAfter(dpicker_btn);
+                    
+                    var inpt2 = $('<input>').attr('id',$input.attr('id')+'-2')
+                            .addClass('text ui-widget-content ui-corner-all')
+                            .attr('autocomplete','disabled')
+                            .attr('autocorrect','off')
+                            .attr('autocapitalize','none')
+                            .attr('spellcheck','false')
+                            .change(function(){
+                                that.onChange();
+                            })
+                            .insertAfter(edash);
+                    that._createDateInput(inpt2, $inputdiv);
+            
+                    /*
+                    var opts = window.hWin.HEURIST4.util.cloneJSON(that.options);
+                    opts.showclear_button = false;
+                    opts.is_between_mode = false;
+                    opts.suppress_repeat = false;
+                    $('<div>').attr('id',$input.attr('id')+'-2').editing_input(that.options).insertAfter(edash);    
+                    */
+                }else{
+                    edash.insertAfter($input);
+                    
+                    $input.css({'max-width':'20ex','min-width':'20ex'});   
+                    
+                    $input.clone(true).attr('id',$input.attr('id')+'-2').insertAfter(edash);
+                }
+                if(input_id!=null){
+                    return false;
+                }
+            }
+        });
+        
     }
 
 });

@@ -1,11 +1,14 @@
 /**
-* Simpe query builder
+* Simple query builder
 *
 * @package     Heurist academic knowledge management system
 * @link        http://HeuristNetwork.org
 * @copyright   (C) 2005-2020 University of Sydney
 * @author      Artem Osmakov   <artem.osmakov@sydney.edu.au>
+* @designer    Ian Johnson     <ian.johnson@sydney.edu.au>
 * @note        Completely revised for Heurist version 4
+* @note        BEING REPLACVED WITH ENHANCED FILTER BUILDER IN VERSION 6
+* @TODO         DELETE WHEN NO LOGNER REFERENCED
 * @license     http://www.gnu.org/licenses/gpl-3.0.txt GNU License 3.0
 * @version     4.0
 */
@@ -19,7 +22,7 @@
 */
 
 
-$.widget( "heurist.search_quick", $.heurist.recordAction, {
+$.widget( "heurist.searchQuick", $.heurist.recordAction, {
 
     // default options
     options: {
@@ -48,7 +51,7 @@ $.widget( "heurist.search_quick", $.heurist.recordAction, {
         
         this.element.css('overflow','hidden');
         
-        this.options.htmlContent = window.hWin.HAPI4.baseURL+'hclient/widgets/search/search_quick.html'
+        this.options.htmlContent = window.hWin.HAPI4.baseURL+'hclient/widgets/search/searchQuick.html'
                             +'?t='+window.hWin.HEURIST4.util.random();
         this._super();        
     },
@@ -120,6 +123,23 @@ $.widget( "heurist.search_quick", $.heurist.recordAction, {
                 this.getQueryString();
             }
         });
+        
+        this._on( $('<a href="#" style="float:left">Advanced</a>')
+        .appendTo( dv )
+        .css({'float':'left',margin:'4px 10px','font-size':'0.8em'}), {
+            click: function(event){
+                var widget = window.hWin.HAPI4.LayoutMgr.getWidgetByName('mainMenu6');
+                if(widget){
+                    var pos = this.element.offset();
+                    //this.closeDialog();
+                    setTimeout(function(){
+                        widget.mainMenu6('show_ExploreMenu', null, 'searchBuilder', {top:pos.top-46, left:pos.left});    
+                    },200);
+                    
+                }
+            }
+        });
+
         
         
         

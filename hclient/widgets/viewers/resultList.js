@@ -129,7 +129,7 @@ $.widget( "heurist.resultList", {
     _expandAllDivs: false,
     
     _myTimeoutCloseRecPopup: 0,
-    _myTimeoutOpenRecPopup: 0,
+    _myTimeoutOpenRecPopup: 0, 
     
     _grp_keep_status:{}, //expanded groups
     
@@ -1522,7 +1522,7 @@ $.widget( "heurist.resultList", {
                     sCount = '<a href="'
                     + window.hWin.HAPI4.baseURL+'?db='+window.hWin.HAPI4.database
                     + '&q=' + encodeURIComponent(this.options.aggregate_link.replace('[ID]',recID))
-                    + '" target="_blank" title="See records that already points to this one">'+sCount+'</a>';
+                    + '" target="_blank" title="Count of records which reference this record. Opens list in new tab">'+sCount+'</a>';
                 }
                 sCount = '<span style="margin-right:10px">'+sCount+'</span>';
             }
@@ -2958,10 +2958,11 @@ $.widget( "heurist.resultList", {
                     
                     this._myTimeoutOpenRecPopup = setTimeout(function(){
                         that._showRecordViewPopup( rec_id );
-                    },500);
+                    },1000);
 
                 }
                 ,mouseout: function(){
+                    this._clearTimeouts();
                     this._closeRecordViewPopup();
                 }
 

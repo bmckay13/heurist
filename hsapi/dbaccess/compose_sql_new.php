@@ -70,6 +70,7 @@ related: related in any direction
 relatedfrom: relation type id (termid)    recordtype
 related_to:
 links: recordtype
+rel, r: - relation type (enum)
 
 recordtype is added to link query  as first predicate
 
@@ -97,9 +98,24 @@ VALUE
 4)  Query     "linked_to:15": [{ t:4 }, {"f:1":"Alex" } ]
 "f:10": {"any":[ {t:4}, {} ] }
 
-5) Find all records without field  "f:5":"NULL"
+5) Find all records without field  "f:5":"NULL"  - TODO!!!!
 6) Find all records with any value in field  "f:5":""
 7) Find all records with value not equal ABC  "f:5":"-ABC"
+
+Compare predicates
+        @    fulltext (any word)
+        @-   no words
+        @+   all words
+        OR
+        -   negate value
+            <> between 
+            OR
+            = exact  (== case sensetive)
+            > <  for numeric and dates only
+
+
+
+
 
 */
 
@@ -197,6 +213,11 @@ function get_sql_query_clauses_NEW($db, $params, $currentUser=null){
     $query = new HQuery( "0", $query_json, $search_domain, $currUserID );
     $top_query = $query;
     $query->makeSQL();
+    
+    
+    if($query->error_message){
+        return array('error'=>$query->error_message);
+    }
 
     //1. create tree of predicates
     //2. make where
@@ -245,6 +266,8 @@ class HQuery {
     var $sort_clause = '';
     var $recVisibilityType;
     var $parentquery = null;
+    
+    var $error_message = null;
 
     var $top_limb = array();
     var $sort_phrases;
@@ -279,8 +302,11 @@ class HQuery {
         global $publicOnly, $wg_ids, $params_global; //, $mysqli, $use_user_wss;
 
         $res = $this->top_limb->makeSQL(); //it creates where_clause and fill tables array
-
-        if($this->search_domain!=null){
+        
+        if($this->top_limb->error_message){
+             $this->error_message = $this->top_limb->error_message;
+             return;
+        }else if($this->search_domain!=null){
 
             if ($this->search_domain == NO_BOOKMARK){
                 $this->from_clause = 'Records r'.$this->level.' ';
@@ -532,9 +558,10 @@ class HLimb {
     var $limbs = array();  // limbs and predicates
     var $conjunction = "all"; //and
 
-    //result
+    //results
     var $tables = array();
     var $where_clause = "";
+    var $error_message = null;
 
     var $allowed = array("all"=>" AND ","any"=>" OR ","not"=>"NOT ");
 
@@ -579,6 +606,9 @@ class HLimb {
         }
     }
 
+    //
+    // fills $tables and $where_clause
+    //
     function makeSQL(){
 
         $cnj = $this->allowed[$this->conjunction];
@@ -591,7 +621,11 @@ class HLimb {
             if($res){
                 $where = $cnj."(".$res["where"].")";
                 $this->addTable(@$res["from"]);
+            }else{
+                $this->error_message = $this->limbs[0]->error_message;
+                return null;
             }
+            
 
         }else{
 
@@ -611,6 +645,9 @@ class HLimb {
                         //$where = $where."(".$res["where"].")";
                         //if($ind<$cnt) $where = $where.$cnj;
                     }
+                }else if($limb->error_message){
+                    $this->error_message = $limb->error_message;
+                    return null;
                 }
             }
 
@@ -647,6 +684,9 @@ class HLimb {
 
 }
 
+// ===========================
+//
+//
 class HPredicate {
 
     var $pred_type;
@@ -656,8 +696,12 @@ class HPredicate {
     var $value;
     var $valid = false;
     var $query = null;
+    
+    var $relation_types = null; //for related_to
 
     var $field_list = false; //list of id values
+    
+    var $error_message = null;    
 
     var $qlevel;
     var $index_of_predicate;
@@ -671,7 +715,7 @@ class HPredicate {
 
     var $allowed = array('title','t','modified','url','notes','type','ids','id','count','cnt',
             'f','field','geo','linked_to','linkedto','linkedfrom','related','related_to','relatedto','relatedfrom','links','plain',
-            'addedby','owner','access');
+            'addedby','owner','access','tag','keyword','kwd');
     /*
     notes, n:        record heder notes (scratchpad)
     title:           title contains
@@ -700,7 +744,7 @@ class HPredicate {
         $this->parent = &$parent;
         $this->qlevel = $this->parent->level; //
         $this->index_of_predicate = $index_of_predicate;
-
+        
         $key = explode(":", $key);
         $this->pred_type  = $key[0];
         $ll = count($key);
@@ -714,10 +758,34 @@ class HPredicate {
             if(is_array($value) &&  count($value)>0 && 
                 !(is_numeric(@$value[0]) || is_string(@$value[0])) )
             { //subqueries
-                $level = $this->parent->level."_".$this->parent->cnt_child_query;
-                $this->parent->cnt_child_query++;
+                //special bahvior for related_to - extract reltypes
+                if(strtolower($this->pred_type)=='related_to'){
+                    foreach($value as $idx=>$val){
+                        if(@$val['r']){
+                            $this->relation_types = $val['r'];
+                            if(is_array($this->relation_types) && count(is_array($this->relation_types)==1)){
+                                $this->relation_types = $this->relation_types[0];  
+                            } 
+                            array_splice($value, $idx, 1);
+                            $this->value = $value;
+                            break;
+                        }
+                    }
+                    foreach($value as $idx=>$val){
+                        if(@$val['ids']){
+                            $this->value = $val['ids'];
+                            $value = array();
+                            break;
+                        }
+                    }    
+                }
+                if(count($value)>0){
+            
+                    $level = $this->parent->level."_".$this->parent->cnt_child_query;
+                    $this->parent->cnt_child_query++;
 
-                $this->query = new HQuery( $level, $value );
+                    $this->query = new HQuery( $level, $value );
+                }
             }
             $this->valid = true; //@todo
         }
@@ -823,6 +891,12 @@ class HPredicate {
 
                 return $res;
 
+            case 'tag':
+            case 'keyword':
+            case 'kwd':
+                
+                return $this->predicateKeywords();
+
             case 'linked_to':
             case 'linkedto':
 
@@ -875,11 +949,19 @@ class HPredicate {
         
         $p = "rd".$this->qlevel.".";
         $p = "";
-        
+
         $res = "exists (select dtl_ID from recDetails $p "
-            .' where r'.$this->qlevel.'.rec_ID='.$p.'dtl_RecID AND '
+            .' where r'.$this->qlevel.'.rec_ID='.$p.'dtl_RecID AND ';
+        
+        if($this->isEmptyValue()){
+            $res = $res.$p.'dtl_Geo IS NULL)'; //not defined
+        }else if($this->value==''){  
+            $res = $res.$p.'dtl_Geo IS NOT NULL)'; //any not null value
+        }else {
+            $res = $res
             .$p.'dtl_Geo is not null AND ST_Contains(ST_GeomFromText(\''.$this->value.'\'), '
             .$p.'dtl_Geo) limit 1)';  //MBRContains
+        }
         return array("where"=>$res);
     }
 
@@ -909,6 +991,12 @@ class HPredicate {
         }
         
         $is_empty = $this->isEmptyValue(); //search for empty or not defined value
+        
+        
+        //@todo future - here we need to add code that will
+        // call $this->getFieldValue() inside the loop if $this->value is array
+        // any:[val1,val2,...] or all:[val1,val2,...] or [val1,val2,...] - by default use any
+        //
         
         $val = $this->getFieldValue();
         if(!$val) return null;
@@ -1082,6 +1170,8 @@ class HPredicate {
         }
         
         if($this->fulltext){
+                
+            
                 //execute fulltext search query
                 $res = 'select dtl_RecID from recDetails '
                 . ' left join defDetailTypes on dtl_DetailTypeID=dty_ID '
@@ -1163,6 +1253,98 @@ class HPredicate {
 
     }
 
+    //
+    //
+    //
+    function predicateKeywords(){
+        
+        $this->field_type = "link";
+        $p = $this->qlevel;
+        
+        $where = '';
+
+        if(false && !$this->field_list){
+            $where = "=0";
+        }else{
+            
+            $isAll = false;
+
+            if(is_array($this->value)){
+                if(@$this->value['any']!=null){
+                    $this->value = $this->value['any'];
+                }else if(@$this->value['all']!=null){
+                    $this->value = $this->value['all'];
+                    $isAll = true;
+                }
+            }
+
+            
+            $cs_ids = getCommaSepIds($this->value);
+            if ($cs_ids) {  
+                
+                if(strpos($cs_ids, '-')===0){
+                    $this->negate = true;
+                    $cs_ids = substr($cs_ids, 1);
+                }
+                
+                if(strpos($cs_ids, ',')>0){  //more than one
+
+                    $where = (($this->negate)?'NOT':'')
+                            . ' IN (SELECT rtl_RecID FROM usrRecTagLinks where '
+                            . 'rtl_TagID in ('.$cs_ids.')';
+                    if($isAll){
+                        $cnt = count(explode(',',$cs_ids));
+                        $where = $where.' GROUP BY rtl_RecID HAVING count(*)='.$cnt;
+                    }
+                    $where = $where.')';
+                    
+                }else{
+                    $where = (($this->negate)?'NOT':'')
+                        . ' IN (SELECT rtl_RecID FROM usrRecTagLinks where rtl_TagID = '.$cs_ids.')';
+                }
+                
+                
+//SELECT rtl_RecID as cnt FROM usrrectaglinks where rtl_TagID in (1,3) group by rtl_RecID having count(*)=2);                
+            }else{
+                $pred = null;
+                
+                if(is_array($this->value)){
+                    $values = $this->value;
+                    $pred = array();
+                    foreach ($values as $val){
+                        $this->value = $val;    
+                        $val = $this->getFieldValue();
+                        if($val) array_push($pred,'tag_Text '.$val);
+                    }
+                    
+                    $cnt = count($pred);
+                    if($cnt>0){
+                        $pred = '('.implode(' OR ',$pred).')';
+                        
+                        if($isAll){
+                            $pred = $pred.' GROUP BY rtl_RecID HAVING count(*)='.$cnt;
+                        }
+                    }
+                    
+                }else{
+                    $val = $this->getFieldValue();
+                    if($val) $pred = 'tag_Text '.$val;
+                }
+                
+                if($pred){
+                    $where = ' IN (SELECT rtl_RecID FROM usrRecTagLinks, usrTags where rtl_TagID=tag_ID and '.$pred.')';    
+                }else{
+                    $where = '=0';
+                }                
+            }
+        }
+
+        $where = "r$p.rec_ID ".$where;
+
+        return array("where"=>$where);
+        
+    }    
+    
     /*
     linked_to: pointer field type : query     recordtype
     linkedfrom:
@@ -1410,15 +1592,27 @@ class HPredicate {
             $val = $this->getFieldValue();
 
             if(!$this->field_list){
-                $val = "=0";
+                $val = "!=0";
                 //@todo  findAnyField query
                 //$val = " IN (SELECT rec_ID FROM ".$this->query->from_clause." WHERE".$this->query->where_clause.")";
             }
         }
 
-        $where = "r$p.rec_ID=$rl.rl_SourceID AND ".
-        (($this->field_id && false) ?"$rl.rl_RelationTypeID=".$this->field_id :"$rl.rl_RelationID is not null")
-        ." AND $rl.rl_TargetID".$val;
+        //search by relation type is disabled since it assigns field id instead  @todo fix
+        $where = "r$p.rec_ID=$rl.rl_SourceID AND $rl.rl_TargetID".$val;
+        
+        if($this->relation_types){
+            //(($this->field_id && false) ?"$rl.rl_RelationTypeID=".$this->field_id :)
+            if(is_array($this->relation_types)&& count($this->relation_types)){
+                $where = $where . " AND $rl.rl_RelationTypeID IN (".implode(',',$this->relation_types).")";    
+            }else{
+                $where = $where . " AND $rl.rl_RelationTypeID = ".$this->relation_types;    
+            }
+            
+        }else{
+            $where = $where . " AND $rl.rl_RelationID is not null";
+        }
+        
 
         return array("from"=>"recLinks ".$rl, "where"=>$where);
     }
@@ -1458,6 +1652,7 @@ class HPredicate {
             }
         }
 
+        //search by relation type is disabled since it assigns field id instead  @todo fix
         $where = "r$p.rec_ID=$rl.rl_TargetID AND ".
         (($this->field_id && false) ?"$rl.rl_RelationTypeID=".$this->field_id :"$rl.rl_RelationID is not null")
         ." AND $rl.rl_SourceID".$val;
@@ -1545,14 +1740,14 @@ class HPredicate {
             $datestamp0 = validateAndConvertToISO($vals[0]);
             $datestamp1 = validateAndConvertToISO($vals[1]);
 
-            return "between '$datestamp0' and '$datestamp1'";
+            return ($this->negate?'not ':'')."between '$datestamp0' and '$datestamp1'";
 
         }else{
 
             $datestamp = validateAndConvertToISO($this->value);
 
             if ($this->exact) {
-                return "= '$datestamp'";
+                return ($this->negate?'!':'')."= '$datestamp'";
             }
             else if ($this->lessthan) {
                 return "< '$datestamp'";
@@ -1561,21 +1756,22 @@ class HPredicate {
                 return "> '$datestamp'";
             }
             else {
-                return "LIKE '$datestamp%'";
+                //return "LIKE '$datestamp%'";
 
                 //old way
                 // it's a ":" ("like") query - try to figure out if the user means a whole year or month or default to a day
-                $match = preg_match('/^[0-9]{4}$/', $this->value, $matches);
+                /*$match = preg_match('/^[0-9]{4}$/', $this->value, $matches);
                 if (@$matches[0]) {
                     $date = $matches[0];
                 }
-                else if (preg_match('!^\d{4}[-/]\d{2}$!', $this->value)) {
-                    $date = date('Y-m', $timestamp);
+                else */
+                if (preg_match('!^\d{4}[-/]\d{2}$!', $this->value)) {
+                    $date = $this->value; //date('Y-m', $datestamp);
                 }
                 else {
-                    $date = date('Y-m-d', $timestamp);
+                    $date = $datestamp; //date('Y-m-d', $datestamp);
                 }
-                return "LIKE '$date%'";
+                return ($this->negate?'not ':'')."LIKE '$date%'";
             }
         }
     }
@@ -1585,14 +1781,14 @@ class HPredicate {
     */
     function isEmptyValue(){
                                             //$this->value=='' ||
-        return !is_array($this->value) && ( strtolower($this->value)=='null');
+        return !is_array($this->value) && ( strtolower($this->value)=='null'); // {"f:18":"NULL"}
     }
 
     /**
     * put your comment there...
     *
     */
-    function getFieldValue(  ){
+    function getFieldValue(){
 
         global $mysqli, $params_global, $currUserID;
         
@@ -1611,7 +1807,28 @@ class HPredicate {
             */
         }
 
+        // -   negate value
+        // <> between 
+        
+        // then it analize for
+        // == case sensetive
+        // and at last
+        // = - exact or LIKE (check for % at begin and end)
+        // @    fulltext
+        // > <  for numeric and dates only
+        
+        $this->negate = false;
+        $this->exact = false;
+        $this->fulltext = false;
+        $this->lessthan = false;
+        $this->greaterthan = false;
+        
         //
+        if(strpos($this->value, '-')===0){
+            $this->negate = true;
+            $this->value = substr($this->value, 1);
+        }
+                
         if (strpos($this->value,"<>")===false) {
             
             if(strpos($this->value, '==')===0){
@@ -1619,10 +1836,7 @@ class HPredicate {
                 $this->value = substr($this->value, 2);
             }
             
-            if(strpos($this->value, '-')===0){
-                $this->negate = true;
-                $this->value = substr($this->value, 1);
-            }else if(strpos($this->value, '=')===0){
+            if(strpos($this->value, '=')===0){
                 $this->exact = true;
                 $this->value = substr($this->value, 1);
             }else if(strpos($this->value, '@')===0){
@@ -1640,7 +1854,7 @@ class HPredicate {
         }
         $this->value = $this->cleanQuotedValue($this->value);
 
-        if(trim($this->value)=='') return "!=''";   //find any non empty value
+        if(is_string($this->value) && trim($this->value)=='') return "!=''";   //find any non empty value
 
         $eq = ($this->negate)? '!=' : (($this->lessthan) ? '<' : (($this->greaterthan) ? '>' : '='));
         
@@ -1743,18 +1957,44 @@ class HPredicate {
                         $res = $between."'".$mysqli->real_escape_string($vals[0])."' and '".$mysqli->real_escape_string($vals[1])."'";
                     }
                 
-                }else if($this->fulltext){
+                }else if($this->fulltext && $this->field_type!='link'){
                     
-                    $res = " AGAINST ('".$mysqli->real_escape_string($this->value)."')";
+                    //1. check that fulltext index exists
+                    if($this->checkFullTextIndex()){ 
+                    //returns true and fill $this->error_message if something wrong
+                        return null;
+                    }
+                    
+                    $res = '';
+                    
+                    if(strpos($this->value, '++')===0 || strpos($this->value, '--')===0){
+                       
+                        $op = (strpos($this->value, '+')===0)?' +':' -';
+                        
+                        //get all words
+                        $pattern = "/(\w+)/";
+                        if (preg_match_all($pattern, $this->value, $matches)) {
+                                 $this->value = trim($op).implode($op, $matches[0]);
+                        }
+                        
+                    }
+                     
+                    if(strpos($this->value, '+')>=0 || strpos($this->value, '-')>=0){
+                        $res = ' IN BOOLEAN MODE ';
+                    }
+                    
+                    $res = " AGAINST ('".$mysqli->real_escape_string($this->value)."'$res)";
                     
                 }else{
 
-                    if($eq=='=' && !$this->exact){
-                            $eq = 'LIKE';
-                            $k = strpos($this->value,"%");
+                    if(!$this->exact){ //$eq=='=' && 
+                            $eq = ($this->negate?'NOT ':'').'LIKE';
+                            $k = strpos($this->value,"%"); //if begin or end
                             if($k===false || ($k>0 && $k+1<strlen($this->value))){
                                 $this->value = '%'.$this->value.'%';
                             }
+                    }else{
+                        $eq = ($this->negate?'!=':'=');
                     }
                     if($this->case_sensitive){
                             $eq = 'COLLATE utf8_bin '.$eq;
@@ -1768,9 +2008,53 @@ class HPredicate {
 
         return $res;
 
-    }
+    }//getFieldValue
+    
+    //
+    // check existanse of full text index and creates it
+    // return true - if index is missed or its creation is in progress
+    //
+    function checkFullTextIndex(){
+        global $mysqli;
+        
+        $fld = mysql__select_value($mysqli,
+        'select group_concat(distinct column_name) as fld'
+        .' from information_schema.STATISTICS '
+        ." where table_schema = '".HEURIST_DBNAME_FULL."' and table_name = 'recDetails' and index_type = 'FULLTEXT'");        
+        
+        if($fld==null){
 
-}
+            $mysqli->query('ALTER TABLE recDetails ADD FULLTEXT INDEX `dtl_Value_FullText` (`dtl_Value`) VISIBLE');            
+          
+/*            
+            $k=0;
+            while($k<10){
+                $prog = mysql__select_value($mysqli,"select progress from FROM sys.session where db='".HEURIST_DBNAME_FULL."' "
+                ." AND current_statement like 'ALTER TABLE recDetails ADD FULLTEXT%'");
+error_log($prog);     
+usleep(200);           
+                $k++;
+            }
+*/            
+            
+            $this->error_message = 'create_fulltext';  
+            return true;
+        }
+        return false;
+/*        
+ALTER TABLE `hdb_osmak_7`.`recdetails` DROP INDEX `dtl_Value_FullText` ;        
+ALTER TABLE `hdb_osmak_7`.`recdetails` ADD FULLTEXT INDEX `dtl_Value_FullText` (`dtl_Value`) VISIBLE;
+
+SELECT thd_id, conn_id, db, command, state, current_statement,
+              statement_latency, progress, current_memory, program_name
+         FROM sys.session
+        WHERE progress IS NOT NULL
+*/
+    }
+                            
+
+
+}//HPredicate
 
 /*
 { all: { t:4, f1:peter , any: {}  } }
